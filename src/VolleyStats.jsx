@@ -469,6 +469,17 @@ function Partidos({ db, setDb, onOpen, onStats }) {
 /* ---------------- Registro en vivo ---------------- */
 function setTarget(formato) { return formato === 5 ? 3 : 2; } // sets para ganar
 
+// Puntos necesarios según si es el set decisivo: 25 normal, 15 el último.
+function puntosObjetivo(setNumero, formato) {
+  return setNumero === formato ? 15 : 25;
+}
+// Devuelve "local" | "visitante" | null según reglas: llegar al objetivo con 2+ de diferencia.
+function ganadorSet(pl, pv, objetivo) {
+  if (pl >= objetivo && pl - pv >= 2) return "local";
+  if (pv >= objetivo && pv - pl >= 2) return "visitante";
+  return null;
+}
+
 function Vivo({ db, setDb, matchId, onFinish }) {
   const partido = db.partidos.find((p) => p.id === matchId);
   const sets = useMemo(() => db.sets.filter((s) => s.partido_id === matchId).sort((a, b) => a.numero - b.numero), [db.sets, matchId]);
@@ -523,10 +534,21 @@ function Vivo({ db, setDb, matchId, onFinish }) {
   const puntoManual = (lado) => sumarPunto(lado, 1);
 
   const cerrarSet = () => {
-    const ganadosLocal = sets.filter((s) => s.cerrado && s.puntos_local > s.puntos_visitante).length + (setActual.puntos_local > setActual.puntos_visitante ? 1 : 0);
-    const ganadosVisit = sets.filter((s) => s.cerrado && s.puntos_visitante > s.puntos_local).length + (setActual.puntos_visitante > setActual.puntos_local ? 1 : 0);
+    const objetivoPuntos = puntosObjetivo(setActual.numero, partido.formato);
+    const ganador = ganadorSet(setActual.puntos_local, setActual.puntos_visitante, objetivoPuntos);
+
+    // No permitir cerrar si aún no hay un ganador válido por reglas.
+    if (!ganador) {
+      alert(`El set no se puede cerrar todavía. Se gana con ${objetivoPuntos} puntos y 2 de diferencia.`);
+      return;
+    }
+
+    const ganadosLocal = sets.filter((s) => s.cerrado && s.puntos_local > s.puntos_visitante).length + (ganador === "local" ? 1 : 0);
+    const ganadosVisit = sets.filter((s) => s.cerrado && s.puntos_visitante > s.puntos_local).length + (ganador === "visitante" ? 1 : 0);
     const objetivo = setTarget(partido.formato);
-    const matchOver = ganadosLocal >= objetivo || ganadosVisit >= objetivo;
+    const maxSets = partido.formato; // Bo3 -> máx 3 sets, Bo5 -> máx 5 sets
+    const alcanzoMax = setActual.numero >= maxSets;
+    const matchOver = ganadosLocal >= objetivo || ganadosVisit >= objetivo || alcanzoMax;
 
     setDb((d) => {
       let nuevos = d.sets.map((s) => s.id === setActual.id ? { ...s, cerrado: true } : s);
@@ -542,6 +564,9 @@ function Vivo({ db, setDb, matchId, onFinish }) {
   };
 
   const accCountSet = db.acciones.filter((a) => a.set_id === setActual.id).length;
+  const esUltimoSet = setActual.numero >= partido.formato; // Bo3->set 3, Bo5->set 5
+  const objetivoPuntosSet = puntosObjetivo(setActual.numero, partido.formato); // 25 o 15
+  const ganadorActual = ganadorSet(setActual.puntos_local, setActual.puntos_visitante, objetivoPuntosSet);
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -550,14 +575,18 @@ function Vivo({ db, setDb, matchId, onFinish }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 6 }}>
           <ScorePill name={partido.nombre_local} pts={setActual.puntos_local} sets={partido.sets_local} onAdd={() => puntoManual("local")} />
           <div style={{ textAlign: "center", color: C.dim }}>
-            <div style={{ fontSize: 12 }}>SET {setActual.numero}</div>
-            <div style={{ fontSize: 11 }}>Bo{partido.formato}</div>
+            <div style={{ fontSize: 12 }}>SET {setActual.numero} / {partido.formato}</div>
+            <div style={{ fontSize: 11 }}>Bo{partido.formato}{esUltimoSet ? " · último" : ""}</div>
+            <div style={{ fontSize: 11, marginTop: 2 }}>a {objetivoPuntosSet} pts</div>
           </div>
           <ScorePill name={partido.nombre_visitante} pts={setActual.puntos_visitante} sets={partido.sets_visitante} onAdd={() => puntoManual("visitante")} right />
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
           <button className="vs-btn" onClick={deshacer} style={{ flex: 1, padding: 14, background: C.panel, border: `1px solid ${C.line}` }}>↩ Deshacer</button>
-          <button className="vs-btn" onClick={cerrarSet} style={{ flex: 1, padding: 14, background: C.accent }}>Cerrar set</button>
+          <button className="vs-btn" onClick={cerrarSet}
+            style={{ flex: 1, padding: 14, background: ganadorActual ? C.good : C.panel, border: ganadorActual ? "none" : `1px solid ${C.line}`, color: ganadorActual ? "#fff" : C.dim }}>
+            {esUltimoSet ? "Finalizar partido" : "Cerrar set"}
+          </button>
         </div>
       </div>
 
