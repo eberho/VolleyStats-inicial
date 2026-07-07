@@ -13,7 +13,7 @@ let sbClient = null;
 async function getSupabase(url, key) {
   if (!url || !key) return null;
   if (sbClient) return sbClient;
-  const mod = await import("https://esm.sh/@supabase/supabase-js@2");
+  const mod = await import("@supabase/supabase-js");
   sbClient = mod.createClient(url, key);
   return sbClient;
 }
