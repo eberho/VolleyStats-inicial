@@ -1,4 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import {
+  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from "recharts";
 
 /* ============================================================
    VolleyStats — estadísticas en vivo de voleibol
@@ -832,6 +836,9 @@ function Stats({ db, matchId, onBack }) {
 
       {/* Resumen equipo */}
       <TeamSummary acciones={accFiltradas} />
+
+      {/* Gráficas */}
+      <Graficas stats={stats} acciones={accFiltradas} sets={sets} setFilter={setFilter} />
     </div>
   );
 }
@@ -854,6 +861,115 @@ function TeamSummary({ acciones }) {
           <div style={{ color: C.dim, fontSize: 12 }}>{c.t}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ---------------- Gráficas ---------------- */
+function ChartCard({ title, children, height = 240 }) {
+  return (
+    <div className="card">
+      <div style={{ fontWeight: 700, marginBottom: 10 }}>{title}</div>
+      <ResponsiveContainer width="100%" height={height}>{children}</ResponsiveContainer>
+    </div>
+  );
+}
+
+function Graficas({ stats, acciones, sets, setFilter }) {
+  const ejeColor = C.dim;
+  const tooltipStyle = { background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, color: C.text };
+
+  // 1) Puntos por jugador
+  const dataPuntos = stats
+    .filter((p) => p.puntos > 0)
+    .map((p) => ({ nombre: `#${p.numero}`, puntos: p.puntos }));
+
+  // 2) Distribución de ataque del equipo (punto / continuidad / bloqueado / error)
+  const at = acciones.filter((a) => a.tipo === "ataque");
+  const dataAtaque = [
+    { k: "Punto", v: at.filter((a) => a.resultado === "punto").length, color: C.good },
+    { k: "Continuidad", v: at.filter((a) => a.resultado === "continuidad").length, color: C.accent2 },
+    { k: "Bloqueado", v: at.filter((a) => a.resultado === "bloqueado").length, color: "#9a6a14" },
+    { k: "Error", v: at.filter((a) => a.resultado === "error").length, color: C.bad },
+  ].filter((d) => d.v > 0);
+
+  // 3) Evolución del marcador. Si el filtro es "all", tomamos el set 1; si no, el set filtrado.
+  const setEvol = setFilter === "all" ? (sets[0]?.numero ?? 1) : Number(setFilter);
+  const accEvol = acciones
+    .filter((a) => a.set_numero === setEvol && a.punto_para)
+    .sort((a, b) => a.orden - b.orden);
+  let pl = 0, pv = 0;
+  const dataMarcador = [{ n: 0, local: 0, visitante: 0 }];
+  accEvol.forEach((a, i) => {
+    if (a.punto_para === "local") pl++; else if (a.punto_para === "visitante") pv++;
+    dataMarcador.push({ n: i + 1, local: pl, visitante: pv });
+  });
+
+  // 4) Reparto de puntos del equipo por tipo
+  const puntosLocal = acciones.filter((a) => a.punto_para === "local");
+  const dataReparto = [
+    { k: "Ataque", v: puntosLocal.filter((a) => a.tipo === "ataque").length, color: C.accent },
+    { k: "Saque (ace)", v: puntosLocal.filter((a) => a.tipo === "saque").length, color: C.accent2 },
+    { k: "Bloqueo", v: puntosLocal.filter((a) => a.tipo === "bloqueo").length, color: C.good },
+  ].filter((d) => d.v > 0);
+
+  const hayDatos = acciones.length > 0;
+  if (!hayDatos) {
+    return <Empty text="Registra acciones para ver las gráficas." />;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      {dataPuntos.length > 0 && (
+        <ChartCard title="Puntos por jugador">
+          <BarChart data={dataPuntos} margin={{ top: 4, right: 8, bottom: 4, left: -18 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
+            <XAxis dataKey="nombre" stroke={ejeColor} fontSize={12} />
+            <YAxis stroke={ejeColor} fontSize={12} allowDecimals={false} />
+            <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
+            <Bar dataKey="puntos" fill={C.accent} radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ChartCard>
+      )}
+
+      {dataAtaque.length > 0 && (
+        <ChartCard title="Distribución de ataque (equipo)">
+          <BarChart data={dataAtaque} margin={{ top: 4, right: 8, bottom: 4, left: -18 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
+            <XAxis dataKey="k" stroke={ejeColor} fontSize={12} />
+            <YAxis stroke={ejeColor} fontSize={12} allowDecimals={false} />
+            <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
+            <Bar dataKey="v" radius={[6, 6, 0, 0]}>
+              {dataAtaque.map((d, i) => <Cell key={i} fill={d.color} />)}
+            </Bar>
+          </BarChart>
+        </ChartCard>
+      )}
+
+      {accEvol.length > 0 && (
+        <ChartCard title={`Evolución del marcador · Set ${setEvol}`}>
+          <LineChart data={dataMarcador} margin={{ top: 4, right: 8, bottom: 4, left: -18 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
+            <XAxis dataKey="n" stroke={ejeColor} fontSize={12} label={{ value: "acciones", position: "insideBottom", offset: -2, fill: ejeColor, fontSize: 10 }} />
+            <YAxis stroke={ejeColor} fontSize={12} allowDecimals={false} />
+            <Tooltip contentStyle={tooltipStyle} />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Line type="monotone" dataKey="local" stroke={C.accent} strokeWidth={2} dot={false} name="Local" />
+            <Line type="monotone" dataKey="visitante" stroke={C.accent2} strokeWidth={2} dot={false} name="Visitante" />
+          </LineChart>
+        </ChartCard>
+      )}
+
+      {dataReparto.length > 0 && (
+        <ChartCard title="Reparto de puntos del equipo por tipo">
+          <PieChart>
+            <Pie data={dataReparto} dataKey="v" nameKey="k" cx="50%" cy="50%" outerRadius={80} label={(e) => `${e.k}: ${e.v}`} labelLine={false} fontSize={12}>
+              {dataReparto.map((d, i) => <Cell key={i} fill={d.color} />)}
+            </Pie>
+            <Tooltip contentStyle={tooltipStyle} />
+          </PieChart>
+        </ChartCard>
+      )}
     </div>
   );
 }
