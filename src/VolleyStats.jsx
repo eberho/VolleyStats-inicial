@@ -35,7 +35,7 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const POSICIONES = ["colocador", "opuesto", "central", "punta", "libero"];
 const POS_LABEL = {
-  colocador: "Colocador", opuesto: "Opuesto", central: "Central",
+  colocador: "Armador", opuesto: "Opuesto", central: "Central",
   punta: "Punta", libero: "Líbero",
 };
 
@@ -611,7 +611,7 @@ function Vivo({ db, setDb, matchId, onFinish }) {
                   background: active ? C.accent2 : C.panel2,
                   border: active ? `2px solid ${C.text}` : `1px solid ${C.line}`,
                 }}>
-                #{j.numero}
+                #{j.numero} {j.nombre}
               </button>
             );
           })}
@@ -692,6 +692,7 @@ function Rotacion({ jugadores, enCancha, setEnCancha, sel, setSel }) {
                 }}>
                 <span style={{ fontSize: 10, color: C.dim }}>P{i + 1}</span>
                 <span style={{ fontSize: 18, fontWeight: 800 }}>#{j.numero}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>{j.nombre}</span>
                 <span style={{ fontSize: 10, color: C.dim }}>{POS_LABEL[j.posicion].slice(0, 4)}</span>
               </button>
             ))}
@@ -702,7 +703,7 @@ function Rotacion({ jugadores, enCancha, setEnCancha, sel, setSel }) {
           {jugadores.map((j) => (
             <button key={j.id} className="vs-btn" onClick={() => toggle(j)}
               style={{ padding: "8px 10px", background: enCancha.includes(j.id) ? C.good : C.panel2, fontSize: 13 }}>
-              #{j.numero}
+              #{j.numero} {j.nombre}
             </button>
           ))}
         </div>
@@ -717,7 +718,7 @@ function computeStats(acciones) {
   const byPlayer = {};
   const get = (id, nombre, numero) => {
     if (!byPlayer[id]) byPlayer[id] = {
-      id, nombre, numero, puntos: 0, aces: 0, bloqueos: 0,
+      id, nombre, numero, puntos: 0, aces: 0, bloqueos: 0, errores: 0,
       ataqTotal: 0, ataqPunto: 0, ataqError: 0,
       recTotal: 0, recPos: 0,
     };
@@ -729,6 +730,7 @@ function computeStats(acciones) {
     if (a.punto_para === "local" && (a.tipo === "ataque" || a.tipo === "saque" || a.tipo === "bloqueo")) p.puntos++;
     if (a.tipo === "saque" && a.resultado === "ace") p.aces++;
     if (a.tipo === "bloqueo" && a.resultado === "punto") p.bloqueos++;
+    if (a.resultado === "error") p.errores++;
     if (a.tipo === "ataque") {
       p.ataqTotal++;
       if (a.resultado === "punto") p.ataqPunto++;
@@ -803,19 +805,21 @@ function Stats({ db, matchId, onBack }) {
 
       {/* Tabla por jugador */}
       <div className="card" style={{ overflowX: "auto", padding: 0 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 520 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 680 }}>
           <thead>
             <tr style={{ color: C.dim, textAlign: "right" }}>
               <th style={{ textAlign: "left", padding: 10 }}>Jugador</th>
               <th style={{ padding: 10 }}>Pts</th>
               <th style={{ padding: 10 }}>Aces</th>
+              <th style={{ padding: 10 }}>Pts At.</th>
               <th style={{ padding: 10 }}>Bloq.</th>
+              <th style={{ padding: 10 }}>Errores</th>
               <th style={{ padding: 10 }}>Ef. Ataque</th>
               <th style={{ padding: 10 }}>Rec. +</th>
             </tr>
           </thead>
           <tbody>
-            {stats.length === 0 && <tr><td colSpan={6} style={{ padding: 16, color: C.dim, textAlign: "center" }}>Sin acciones registradas a jugadores.</td></tr>}
+            {stats.length === 0 && <tr><td colSpan={8} style={{ padding: 16, color: C.dim, textAlign: "center" }}>Sin acciones registradas a jugadores.</td></tr>}
             {stats.map((p) => (
               <tr key={p.id} style={{ borderTop: `1px solid ${C.line}`, textAlign: "right" }}>
                 <td style={{ textAlign: "left", padding: 10, fontWeight: 600 }}>
@@ -823,7 +827,9 @@ function Stats({ db, matchId, onBack }) {
                 </td>
                 <td style={{ padding: 10, fontWeight: 800 }}>{p.puntos}</td>
                 <td style={{ padding: 10 }}>{p.aces}</td>
+                <td style={{ padding: 10 }}>{p.ataqPunto}</td>
                 <td style={{ padding: 10 }}>{p.bloqueos}</td>
+                <td style={{ padding: 10, color: p.errores > 0 ? C.bad : C.dim }}>{p.errores}</td>
                 <td style={{ padding: 10, color: p.efAtaque == null ? C.dim : p.efAtaque >= 0 ? C.good : C.bad }}>
                   {p.efAtaque == null ? "—" : p.efAtaque + "%"}
                 </td>
@@ -838,7 +844,7 @@ function Stats({ db, matchId, onBack }) {
       <TeamSummary acciones={accFiltradas} />
 
       {/* Gráficas */}
-      <Graficas stats={stats} acciones={accFiltradas} sets={sets} setFilter={setFilter} />
+      <Graficas stats={stats} acciones={accFiltradas} sets={sets} setFilter={setFilter} partido={partido} />
     </div>
   );
 }
@@ -875,14 +881,15 @@ function ChartCard({ title, children, height = 240 }) {
   );
 }
 
-function Graficas({ stats, acciones, sets, setFilter }) {
+function Graficas({ stats, acciones, sets, setFilter, partido }) {
   const ejeColor = C.dim;
   const tooltipStyle = { background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, color: C.text };
+  const tooltipItemStyle = { color: C.text };
 
   // 1) Puntos por jugador
   const dataPuntos = stats
     .filter((p) => p.puntos > 0)
-    .map((p) => ({ nombre: `#${p.numero}`, puntos: p.puntos }));
+    .map((p) => ({ nombre: `#${p.numero} ${p.nombre}`, puntos: p.puntos }));
 
   // 2) Distribución de ataque del equipo (punto / continuidad / bloqueado / error)
   const at = acciones.filter((a) => a.tipo === "ataque");
@@ -921,12 +928,12 @@ function Graficas({ stats, acciones, sets, setFilter }) {
   return (
     <div style={{ display: "grid", gap: 12 }}>
       {dataPuntos.length > 0 && (
-        <ChartCard title="Puntos por jugador">
-          <BarChart data={dataPuntos} margin={{ top: 4, right: 8, bottom: 4, left: -18 }}>
+        <ChartCard title="Puntos por jugador" height={280}>
+          <BarChart data={dataPuntos} margin={{ top: 4, right: 8, bottom: 24, left: -18 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
-            <XAxis dataKey="nombre" stroke={ejeColor} fontSize={12} />
+            <XAxis dataKey="nombre" stroke={ejeColor} fontSize={12} angle={-35} textAnchor="end" interval={0} height={50} />
             <YAxis stroke={ejeColor} fontSize={12} allowDecimals={false} />
-            <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
+            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
             <Bar dataKey="puntos" fill={C.accent} radius={[6, 6, 0, 0]} />
           </BarChart>
         </ChartCard>
@@ -938,7 +945,7 @@ function Graficas({ stats, acciones, sets, setFilter }) {
             <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
             <XAxis dataKey="k" stroke={ejeColor} fontSize={12} />
             <YAxis stroke={ejeColor} fontSize={12} allowDecimals={false} />
-            <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
+            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} cursor={{ fill: "rgba(255,255,255,0.05)" }} />
             <Bar dataKey="v" radius={[6, 6, 0, 0]}>
               {dataAtaque.map((d, i) => <Cell key={i} fill={d.color} />)}
             </Bar>
@@ -952,10 +959,10 @@ function Graficas({ stats, acciones, sets, setFilter }) {
             <CartesianGrid strokeDasharray="3 3" stroke={C.line} />
             <XAxis dataKey="n" stroke={ejeColor} fontSize={12} label={{ value: "acciones", position: "insideBottom", offset: -2, fill: ejeColor, fontSize: 10 }} />
             <YAxis stroke={ejeColor} fontSize={12} allowDecimals={false} />
-            <Tooltip contentStyle={tooltipStyle} />
+            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Line type="monotone" dataKey="local" stroke={C.accent} strokeWidth={2} dot={false} name="Local" />
-            <Line type="monotone" dataKey="visitante" stroke={C.accent2} strokeWidth={2} dot={false} name="Visitante" />
+            <Line type="monotone" dataKey="local" stroke={C.accent} strokeWidth={2} dot={false} name={partido.nombre_local} />
+            <Line type="monotone" dataKey="visitante" stroke={C.accent2} strokeWidth={2} dot={false} name={partido.nombre_visitante} />
           </LineChart>
         </ChartCard>
       )}
@@ -966,7 +973,7 @@ function Graficas({ stats, acciones, sets, setFilter }) {
             <Pie data={dataReparto} dataKey="v" nameKey="k" cx="50%" cy="50%" outerRadius={80} label={(e) => `${e.k}: ${e.v}`} labelLine={false} fontSize={12}>
               {dataReparto.map((d, i) => <Cell key={i} fill={d.color} />)}
             </Pie>
-            <Tooltip contentStyle={tooltipStyle} />
+            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} />
           </PieChart>
         </ChartCard>
       )}
