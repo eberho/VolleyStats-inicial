@@ -537,6 +537,20 @@ function Vivo({ db, setDb, matchId, onFinish }) {
 
   const puntoManual = (lado) => sumarPunto(lado, 1);
 
+  // Acciones del rival: punto directo del visitante, o error del visitante (+1 local).
+  // Se guardan como acción para que "Deshacer" también las revierta.
+  const registrarRival = (resultado) => {
+    const accion = {
+      id: uid(), partido_id: matchId, set_id: setActual.id, set_numero: setActual.numero,
+      jugador_id: null, jugador_nombre: null, jugador_numero: null,
+      equipo_lado: "visitante", tipo: "rival", resultado,
+      punto_para: resultado === "punto" ? "visitante" : "local",
+      orden: Date.now(),
+    };
+    setDb((d) => ({ ...d, acciones: [...d.acciones, accion] }));
+    sumarPunto(accion.punto_para, 1);
+  };
+
   const cerrarSet = () => {
     const objetivoPuntos = puntosObjetivo(setActual.numero, partido.formato);
     const ganador = ganadorSet(setActual.puntos_local, setActual.puntos_visitante, objetivoPuntos);
@@ -583,7 +597,19 @@ function Vivo({ db, setDb, matchId, onFinish }) {
             <div style={{ fontSize: 11 }}>Bo{partido.formato}{esUltimoSet ? " · último" : ""}</div>
             <div style={{ fontSize: 11, marginTop: 2 }}>a {objetivoPuntosSet} pts</div>
           </div>
-          <ScorePill name={partido.nombre_visitante} pts={setActual.puntos_visitante} sets={partido.sets_visitante} onAdd={() => puntoManual("visitante")} right />
+          <div>
+            <ScorePill name={partido.nombre_visitante} pts={setActual.puntos_visitante} sets={partido.sets_visitante} onAdd={() => puntoManual("visitante")} right />
+            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }}>
+              <button className="vs-btn" onClick={() => registrarRival("punto")}
+                style={{ padding: "8px 10px", fontSize: 12, background: C.good }}>
+                Punto +1 visita
+              </button>
+              <button className="vs-btn" onClick={() => registrarRival("error")}
+                style={{ padding: "8px 10px", fontSize: 12, background: C.bad }}>
+                Error +1 local
+              </button>
+            </div>
+          </div>
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
           <button className="vs-btn" onClick={deshacer} style={{ flex: 1, padding: 14, background: C.panel, border: `1px solid ${C.line}` }}>↩ Deshacer</button>
@@ -758,6 +784,8 @@ function Stats({ db, matchId, onBack }) {
 
   const accFiltradas = setFilter === "all" ? acciones : acciones.filter((a) => a.set_numero === Number(setFilter));
   const stats = computeStats(accFiltradas);
+  const hayRival = accFiltradas.some((a) => a.equipo_lado === "visitante");
+  const erroresRival = accFiltradas.filter((a) => a.equipo_lado === "visitante" && a.resultado === "error").length;
 
   const exportCSV = () => {
     const header = ["partido", "fecha", "set", "jugador_num", "jugador", "tipo", "resultado", "punto_para"];
@@ -836,6 +864,18 @@ function Stats({ db, matchId, onBack }) {
                 <td style={{ padding: 10 }}>{p.recPosPct == null ? "—" : p.recPosPct + "%"}</td>
               </tr>
             ))}
+            {hayRival && (
+              <tr style={{ borderTop: `2px solid ${C.line}`, textAlign: "right", color: C.dim }}>
+                <td style={{ textAlign: "left", padding: 10, fontWeight: 600 }}>{partido.nombre_visitante} <span style={{ fontWeight: 400 }}>(rival)</span></td>
+                <td style={{ padding: 10 }}>—</td>
+                <td style={{ padding: 10 }}>—</td>
+                <td style={{ padding: 10 }}>—</td>
+                <td style={{ padding: 10 }}>—</td>
+                <td style={{ padding: 10, color: erroresRival > 0 ? C.bad : C.dim, fontWeight: 700 }}>{erroresRival}</td>
+                <td style={{ padding: 10 }}>—</td>
+                <td style={{ padding: 10 }}>—</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -850,11 +890,13 @@ function Stats({ db, matchId, onBack }) {
 }
 
 function TeamSummary({ acciones }) {
-  const total = acciones.length;
+  // Solo acciones del equipo local: las del rival (tipo "rival") no cuentan aquí.
+  const propias = acciones.filter((a) => a.equipo_lado === "local");
+  const total = propias.length;
   const puntosEquipo = acciones.filter((a) => a.punto_para === "local").length;
-  const erroresPropios = acciones.filter((a) => a.resultado === "error").length;
-  const aces = acciones.filter((a) => a.tipo === "saque" && a.resultado === "ace").length;
-  const bloqueos = acciones.filter((a) => a.tipo === "bloqueo" && a.resultado === "punto").length;
+  const erroresPropios = propias.filter((a) => a.resultado === "error").length;
+  const aces = propias.filter((a) => a.tipo === "saque" && a.resultado === "ace").length;
+  const bloqueos = propias.filter((a) => a.tipo === "bloqueo" && a.resultado === "punto").length;
   const cards = [
     { t: "Acciones", v: total }, { t: "Puntos equipo", v: puntosEquipo },
     { t: "Aces", v: aces }, { t: "Bloqueos", v: bloqueos }, { t: "Errores propios", v: erroresPropios },
