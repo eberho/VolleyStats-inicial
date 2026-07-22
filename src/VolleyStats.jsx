@@ -33,6 +33,29 @@ const LS = {
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+// Lee una imagen y la redimensiona a máx `max` px (lado mayor), devolviendo un data URL PNG.
+// Se comprime para no saturar localStorage (que ronda los 5 MB).
+function readImageResized(file, max = 128) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const escala = Math.min(1, max / Math.max(img.width, img.height));
+        const w = Math.round(img.width * escala), h = Math.round(img.height * escala);
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 const POSICIONES = ["colocador", "opuesto", "central", "punta", "libero"];
 const POS_LABEL = {
   colocador: "Armador", opuesto: "Opuesto", central: "Central",
@@ -289,26 +312,47 @@ function BottomNav({ route, onNav }) {
 /* ---------------- Equipos y jugadores ---------------- */
 function Equipos({ db, setDb }) {
   const [nombre, setNombre] = useState("");
+  const [dt, setDt] = useState("");
   const [openTeam, setOpenTeam] = useState(null);
+  const [editDtId, setEditDtId] = useState(null);
+  const [editDtVal, setEditDtVal] = useState("");
 
   const addTeam = () => {
     if (!nombre.trim()) return;
-    setDb((d) => ({ ...d, equipos: [...d.equipos, { id: uid(), nombre: nombre.trim() }] }));
-    setNombre("");
+    setDb((d) => ({ ...d, equipos: [...d.equipos, { id: uid(), nombre: nombre.trim(), dt: dt.trim() || null }] }));
+    setNombre(""); setDt("");
   };
   const delTeam = (id) => setDb((d) => ({
     ...d, equipos: d.equipos.filter((e) => e.id !== id),
     jugadores: d.jugadores.filter((j) => j.equipo_id !== id),
   }));
+  const setDTeam = (id, val) => setDb((d) => ({
+    ...d, equipos: d.equipos.map((e) => e.id === id ? { ...e, dt: val } : e),
+  }));
+  const startEditDt = (eq) => { setEditDtId(eq.id); setEditDtVal(eq.dt || ""); };
+  const saveDt = () => { setDTeam(editDtId, editDtVal.trim() || null); setEditDtId(null); };
+  const setLogo = (id, logo) => setDb((d) => ({
+    ...d, equipos: d.equipos.map((e) => e.id === id ? { ...e, logo } : e),
+  }));
+  const onPickLogo = async (id, file) => {
+    if (!file) return;
+    try { setLogo(id, await readImageResized(file, 128)); }
+    catch { alert("No se pudo cargar la imagen."); }
+  };
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <h2 style={{ margin: "4px 0" }}>Equipos</h2>
-      <div className="card" style={{ display: "flex", gap: 8 }}>
+      <div className="card" style={{ display: "grid", gap: 8 }}>
         <input placeholder="Nombre del equipo" value={nombre}
           onChange={(e) => setNombre(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && addTeam()} />
-        <button className="vs-btn" onClick={addTeam} style={{ padding: "0 18px", background: C.accent }}>+</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input placeholder="DT (opcional)" value={dt} style={{ flex: 1, minWidth: 0 }}
+            onChange={(e) => setDt(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addTeam()} />
+          <button className="vs-btn" onClick={addTeam} style={{ padding: "0 18px", background: C.accent }}>+</button>
+        </div>
       </div>
 
       {db.equipos.length === 0 && <Empty text="Crea tu primer equipo para empezar." />}
@@ -319,9 +363,39 @@ function Equipos({ db, setDb }) {
         return (
           <div key={eq.id} className="card">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 700 }}>{eq.nombre}</div>
-                <div style={{ color: C.dim, fontSize: 13 }}>{jug.length} jugador{jug.length !== 1 ? "es" : ""}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ position: "relative" }}>
+                  <label title={eq.logo ? "Cambiar logo" : "Añadir logo"} style={{ cursor: "pointer", display: "block" }}>
+                    {eq.logo
+                      ? <img src={eq.logo} alt={`Logo ${eq.nombre}`} style={{ width: 48, height: 48, borderRadius: 12, objectFit: "cover", background: C.panel2, display: "block" }} />
+                      : <div style={{ width: 48, height: 48, borderRadius: 12, background: C.panel2, display: "grid", placeItems: "center", fontSize: 22 }}>🏐</div>}
+                    <input type="file" accept="image/*" style={{ display: "none" }}
+                      onChange={(e) => { onPickLogo(eq.id, e.target.files?.[0]); e.target.value = ""; }} />
+                  </label>
+                  {eq.logo && (
+                    <button className="vs-btn" title="Quitar logo" onClick={() => setLogo(eq.id, null)}
+                      style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, padding: 0, borderRadius: "50%", background: TONE_BG.bad, color: "#fff", fontSize: 11, lineHeight: 1 }}>✕</button>
+                  )}
+                </div>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{eq.nombre}</div>
+                  <div style={{ color: C.dim, fontSize: 13 }}>{jug.length} jugador{jug.length !== 1 ? "es" : ""}</div>
+                  {editDtId === eq.id ? (
+                    <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                      <input placeholder="Nombre del DT" value={editDtVal} autoFocus style={{ flex: 1, minWidth: 0, fontSize: 13, padding: "4px 8px" }}
+                        onChange={(e) => setEditDtVal(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" ? saveDt() : e.key === "Escape" && setEditDtId(null)} />
+                      <button className="vs-btn" onClick={saveDt} style={{ padding: "4px 8px", background: C.good, fontSize: 12 }}>✓</button>
+                      <button className="vs-btn" onClick={() => setEditDtId(null)} style={{ padding: "4px 8px", background: C.panel2, fontSize: 12 }}>✕</button>
+                    </div>
+                  ) : (
+                    <div style={{ color: C.dim, fontSize: 13, display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                      <span>DT: {eq.dt ? <span style={{ color: C.text }}>{eq.dt}</span> : <span style={{ fontStyle: "italic" }}>sin asignar</span>}</span>
+                      <button className="vs-btn" title={eq.dt ? "Editar DT" : "Asignar DT"} onClick={() => startEditDt(eq)}
+                        style={{ padding: "2px 6px", background: "transparent", color: C.accent2, fontSize: 12 }}>✎</button>
+                    </div>
+                  )}
+                </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button className="vs-btn" onClick={() => setOpenTeam(open ? null : eq.id)}
@@ -351,6 +425,22 @@ function Plantilla({ db, setDb, equipoId, jugadores }) {
   };
   const del = (id) => setDb((d) => ({ ...d, jugadores: d.jugadores.filter((j) => j.id !== id) }));
 
+  // Edición inline de un jugador
+  const [editId, setEditId] = useState(null);
+  const [eNum, setENum] = useState(""); const [eN, setEN] = useState(""); const [ePos, setEPos] = useState("punta");
+  const startEdit = (j) => { setEditId(j.id); setENum(String(j.numero)); setEN(j.nombre); setEPos(j.posicion); };
+  const saveEdit = () => {
+    if (!eN.trim() || eNum === "") return;
+    const nombre = eN.trim(), numero = Number(eNum);
+    setDb((d) => ({
+      ...d,
+      jugadores: d.jugadores.map((j) => j.id === editId ? { ...j, nombre, numero, posicion: ePos } : j),
+      // Actualiza también el nombre/dorsal desnormalizados en las acciones ya registradas
+      acciones: d.acciones.map((a) => a.jugador_id === editId ? { ...a, jugador_nombre: nombre, jugador_numero: numero } : a),
+    }));
+    setEditId(null);
+  };
+
   return (
     <div style={{ marginTop: 14, borderTop: `1px solid ${C.line}`, paddingTop: 14, display: "grid", gap: 10 }}>
       <div style={{ display: "grid", gridTemplateColumns: "60px 1fr 1.2fr 56px", gap: 8 }}>
@@ -362,12 +452,25 @@ function Plantilla({ db, setDb, equipoId, jugadores }) {
         <button className="vs-btn" onClick={add} style={{ background: C.accent }}>+</button>
       </div>
       {jugadores.sort((a, b) => a.numero - b.numero).map((j) => (
-        <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 10, background: C.panel2, padding: "8px 12px", borderRadius: 10 }}>
-          <span style={{ fontWeight: 800, width: 30, color: C.accent }}>#{j.numero}</span>
-          <span style={{ flex: 1, fontWeight: 600 }}>{j.nombre}</span>
-          <span style={{ color: C.dim, fontSize: 13 }}>{POS_LABEL[j.posicion]}</span>
-          <button className="vs-btn" onClick={() => del(j.id)} style={{ padding: "6px 10px", background: "transparent", color: C.bad }}>✕</button>
-        </div>
+        editId === j.id ? (
+          <div key={j.id} style={{ display: "grid", gridTemplateColumns: "60px 1fr 1.2fr 56px 56px", gap: 8, background: C.panel2, padding: "8px 12px", borderRadius: 10 }}>
+            <input placeholder="#" value={eNum} inputMode="numeric" onChange={(e) => setENum(e.target.value.replace(/\D/g, ""))} />
+            <input placeholder="Nombre" value={eN} onChange={(e) => setEN(e.target.value)} />
+            <select value={ePos} onChange={(e) => setEPos(e.target.value)}>
+              {POSICIONES.map((p) => <option key={p} value={p}>{POS_LABEL[p]}</option>)}
+            </select>
+            <button className="vs-btn" onClick={saveEdit} style={{ background: C.good }}>✓</button>
+            <button className="vs-btn" onClick={() => setEditId(null)} style={{ background: C.panel, border: `1px solid ${C.line}` }}>✕</button>
+          </div>
+        ) : (
+          <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 10, background: C.panel2, padding: "8px 12px", borderRadius: 10 }}>
+            <span style={{ fontWeight: 800, width: 30, color: C.accent }}>#{j.numero}</span>
+            <span style={{ flex: 1, fontWeight: 600 }}>{j.nombre}</span>
+            <span style={{ color: C.dim, fontSize: 13 }}>{POS_LABEL[j.posicion]}</span>
+            <button className="vs-btn" onClick={() => startEdit(j)} style={{ padding: "6px 10px", background: "transparent", color: C.accent2 }}>✎</button>
+            <button className="vs-btn" onClick={() => del(j.id)} style={{ padding: "6px 10px", background: "transparent", color: C.bad }}>✕</button>
+          </div>
+        )
       ))}
     </div>
   );
@@ -380,6 +483,7 @@ function Partidos({ db, setDb, onOpen, onStats }) {
   const [fecha, setFecha] = useState(todayISO()); const [formato, setFormato] = useState(5);
 
   const teamName = (id) => db.equipos.find((e) => e.id === id)?.nombre || "";
+  const teamLogo = (id) => db.equipos.find((e) => e.id === id)?.logo || null;
 
   const crear = () => {
     if (!local || !visit) return;
@@ -451,10 +555,12 @@ function Partidos({ db, setDb, onOpen, onStats }) {
         <div key={p.id} className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 16 }}>
-                {p.nombre_local} <span style={{ color: C.accent }}>{p.sets_local}–{p.sets_visitante}</span> {p.nombre_visitante}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 16 }}>
+                <TeamLogo logo={teamLogo(p.equipo_local_id)} size={26} />
+                <span>{p.nombre_local} <span style={{ color: C.accent }}>{p.sets_local}–{p.sets_visitante}</span> {p.nombre_visitante}</span>
+                <TeamLogo logo={teamLogo(p.equipo_visitante_id)} size={26} />
               </div>
-              <div style={{ color: C.dim, fontSize: 12.5 }}>
+              <div style={{ color: C.dim, fontSize: 12.5, marginTop: 4 }}>
                 {p.fecha} · Bo{p.formato} · {p.estado === "en_curso" ? "En curso" : "Finalizado"}
               </div>
             </div>
@@ -581,6 +687,8 @@ function Vivo({ db, setDb, matchId, onFinish }) {
     if (matchOver) onFinish();
   };
 
+  const logoLocal = db.equipos.find((e) => e.id === partido.equipo_local_id)?.logo || null;
+  const logoVisit = db.equipos.find((e) => e.id === partido.equipo_visitante_id)?.logo || null;
   const accCountSet = db.acciones.filter((a) => a.set_id === setActual.id).length;
   const esUltimoSet = setActual.numero >= partido.formato; // Bo3->set 3, Bo5->set 5
   const objetivoPuntosSet = puntosObjetivo(setActual.numero, partido.formato); // 25 o 15
@@ -591,25 +699,24 @@ function Vivo({ db, setDb, matchId, onFinish }) {
       {/* Marcador */}
       <div className="card" style={{ background: C.panel2, padding: 14 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 6 }}>
-          <ScorePill name={partido.nombre_local} pts={setActual.puntos_local} sets={partido.sets_local} onAdd={() => puntoManual("local")} />
+          <ScorePill name={partido.nombre_local} pts={setActual.puntos_local} sets={partido.sets_local} onAdd={() => puntoManual("local")} logo={logoLocal} />
           <div style={{ textAlign: "center", color: C.dim }}>
             <div style={{ fontSize: 12 }}>SET {setActual.numero} / {partido.formato}</div>
             <div style={{ fontSize: 11 }}>Bo{partido.formato}{esUltimoSet ? " · último" : ""}</div>
             <div style={{ fontSize: 11, marginTop: 2 }}>a {objetivoPuntosSet} pts</div>
           </div>
-          <div>
-            <ScorePill name={partido.nombre_visitante} pts={setActual.puntos_visitante} sets={partido.sets_visitante} onAdd={() => puntoManual("visitante")} right />
-            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 }}>
-              <button className="vs-btn" onClick={() => registrarRival("punto")}
-                style={{ padding: "8px 10px", fontSize: 12, background: C.good }}>
-                Punto +1 visita
-              </button>
-              <button className="vs-btn" onClick={() => registrarRival("error")}
-                style={{ padding: "8px 10px", fontSize: 12, background: C.bad }}>
-                Error +1 local
-              </button>
-            </div>
-          </div>
+          <ScorePill name={partido.nombre_visitante} pts={setActual.puntos_visitante} sets={partido.sets_visitante} onAdd={() => puntoManual("visitante")} right logo={logoVisit} />
+        </div>
+        {/* Acciones rápidas de la visita */}
+        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 8 }}>
+          <button className="vs-btn" onClick={() => registrarRival("punto")}
+            style={{ padding: "8px 10px", fontSize: 12, background: C.good }}>
+            Punto +1 visita
+          </button>
+          <button className="vs-btn" onClick={() => registrarRival("error")}
+            style={{ padding: "8px 10px", fontSize: 12, background: C.bad }}>
+            Error +1 local
+          </button>
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
           <button className="vs-btn" onClick={deshacer} style={{ flex: 1, padding: 14, background: C.panel, border: `1px solid ${C.line}` }}>↩ Deshacer</button>
@@ -678,11 +785,23 @@ function Vivo({ db, setDb, matchId, onFinish }) {
   );
 }
 
-function ScorePill({ name, pts, sets, onAdd, right }) {
+// Logo del equipo (o placeholder 🏐 si no tiene). Cuadrado con esquinas redondeadas.
+function TeamLogo({ logo, size = 28 }) {
+  const base = { width: size, height: size, borderRadius: Math.round(size * 0.25), background: C.panel2, flexShrink: 0 };
+  return logo
+    ? <img src={logo} alt="" style={{ ...base, objectFit: "cover", display: "block" }} />
+    : <div style={{ ...base, display: "grid", placeItems: "center", fontSize: Math.round(size * 0.5) }}>🏐</div>;
+}
+
+function ScorePill({ name, pts, sets, onAdd, right, logo }) {
   return (
     <div style={{ textAlign: right ? "right" : "left" }}>
-      <div style={{ fontSize: 13, color: C.dim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {name} <span style={{ color: C.accent }}>·{sets} sets</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: right ? "flex-end" : "flex-start" }}>
+        {!right && <TeamLogo logo={logo} size={22} />}
+        <div style={{ fontSize: 13, color: C.dim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {name} <span style={{ color: C.accent }}>·{sets} sets</span>
+        </div>
+        {right && <TeamLogo logo={logo} size={22} />}
       </div>
       <button className="vs-btn" onClick={onAdd}
         style={{ fontSize: 52, fontWeight: 800, lineHeight: 1, padding: "6px 14px", background: "transparent", color: C.text, marginTop: 2 }}>
@@ -809,10 +928,24 @@ function Stats({ db, matchId, onBack }) {
       </div>
 
       <div className="card">
-        <div style={{ fontWeight: 800, fontSize: 18 }}>
-          {partido.nombre_local} <span style={{ color: C.accent }}>{partido.sets_local}–{partido.sets_visitante}</span> {partido.nombre_visitante}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: 18 }}>
+          <TeamLogo logo={db.equipos.find((e) => e.id === partido.equipo_local_id)?.logo || null} size={28} />
+          <span>{partido.nombre_local} <span style={{ color: C.accent }}>{partido.sets_local}–{partido.sets_visitante}</span> {partido.nombre_visitante}</span>
+          <TeamLogo logo={db.equipos.find((e) => e.id === partido.equipo_visitante_id)?.logo || null} size={28} />
         </div>
         <div style={{ color: C.dim, fontSize: 13 }}>{partido.fecha} · Bo{partido.formato} · {partido.estado === "en_curso" ? "En curso" : "Finalizado"}</div>
+        {(() => {
+          const dtLocal = db.equipos.find((e) => e.id === partido.equipo_local_id)?.dt;
+          const dtVisit = db.equipos.find((e) => e.id === partido.equipo_visitante_id)?.dt;
+          if (!dtLocal && !dtVisit) return null;
+          return (
+            <div style={{ color: C.dim, fontSize: 13, marginTop: 2 }}>
+              DT {partido.nombre_local}: <span style={{ color: C.text }}>{dtLocal || "—"}</span>
+              {" · "}
+              DT {partido.nombre_visitante}: <span style={{ color: C.text }}>{dtVisit || "—"}</span>
+            </div>
+          );
+        })()}
         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
           {sets.map((s) => (
             <div key={s.id} style={{ background: C.panel2, borderRadius: 8, padding: "6px 10px", fontSize: 13 }}>
